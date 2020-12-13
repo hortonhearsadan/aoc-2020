@@ -3,27 +3,19 @@ use std::str::FromStr;
 use std::time::Instant;
 
 use aoc_2020::get_input;
-
-enum CardinalDirection {
-    North,
-    South,
-    East,
-    West,
-}
-
-impl CardinalDirection {
-    fn get_translation_vector(&self, count: u32) -> (i32, i32) {
-        match self {
-            Self::North => (0, count as i32),
-            Self::South => (0, -(count as i32)),
-            Self::East => (count as i32, 0),
-            Self::West => (-(count as i32), 0),
-        }
-    }
-}
+use num_complex::Complex;
 
 struct ParseInstructionError {}
 
+trait ToComplex<T> {
+    fn to_complex(&self) -> Complex<i32> {
+        Complex::new(0, 0)
+    }
+
+    fn from_complex(c: Complex<i32>) -> T;
+}
+
+#[derive(Debug)]
 enum Instruction {
     North(u32),
     South(u32),
@@ -32,6 +24,30 @@ enum Instruction {
     Left(u32),
     Right(u32),
     Forward(u32),
+}
+
+impl ToComplex<Instruction> for Instruction {
+    fn to_complex(&self) -> Complex<i32> {
+        match self {
+            Instruction::North(_) => Complex::new(0, 1),
+
+            Instruction::South(_) => Complex::new(0, -1),
+            Instruction::East(_) => Complex::new(1, 0),
+            Instruction::West(_) => Complex::new(-1, 0),
+            Instruction::Left(_) => Complex::new(0, 1),
+            Instruction::Right(_) => Complex::new(0, -1),
+            Instruction::Forward(_) => Complex::new(0, 0),
+        }
+    }
+    fn from_complex(c: Complex<i32>) -> Instruction {
+        match c {
+            Complex { re: 1, im: 0 } => Instruction::East(0),
+            Complex { re: 0, im: 1 } => Instruction::North(0),
+            Complex { re: -1, im: 0 } => Instruction::West(0),
+            Complex { re: 0, im: -1 } => Instruction::South(0),
+            _ => Instruction::East(0),
+        }
+    }
 }
 
 impl FromStr for Instruction {
@@ -60,79 +76,6 @@ impl FromStr for Instruction {
     }
 }
 
-struct Ship {
-    pos_x: i32,
-    pos_y: i32,
-    way_x: i32,
-    way_y: i32,
-}
-
-impl Ship {
-    fn new(waypoint: (i32, i32)) -> Self {
-        Ship {
-            pos_x: 0,
-            pos_y: 0,
-            way_x: waypoint.0,
-            way_y: waypoint.1,
-        }
-    }
-
-    fn move_ship(&mut self, vec: (i32, i32)) {
-        self.pos_x += vec.0;
-        self.pos_y += vec.1;
-    }
-
-    fn move_waypoint(&mut self, vec: (i32, i32)) {
-        self.way_x += vec.0;
-        self.way_y += vec.1;
-    }
-
-    fn rotate_waypoint_left(&mut self, deg: i32) {
-        let waypoint = rotate_vec((self.way_x, self.way_y), deg);
-        self.way_x = waypoint.0;
-        self.way_y = waypoint.1;
-    }
-
-    fn rotate_waypoint_right(&mut self, deg: i32) {
-        self.rotate_waypoint_left(-deg);
-    }
-
-    fn apply_instruction(&mut self, instr: &Instruction, move_fn: &dyn Fn(&mut Self, (i32, i32))) {
-        match instr {
-            Instruction::North(c) => {
-                move_fn(self, CardinalDirection::North.get_translation_vector(*c))
-            }
-            Instruction::South(c) => {
-                move_fn(self, CardinalDirection::South.get_translation_vector(*c))
-            }
-            Instruction::East(c) => {
-                move_fn(self, CardinalDirection::East.get_translation_vector(*c))
-            }
-            Instruction::West(c) => {
-                move_fn(self, CardinalDirection::West.get_translation_vector(*c))
-            }
-            Instruction::Left(c) => self.rotate_waypoint_left(*c as i32),
-            Instruction::Right(c) => self.rotate_waypoint_right(*c as i32),
-            Instruction::Forward(c) => {
-                let c = *c as i32;
-                self.move_ship((self.way_x * c, self.way_y * c));
-            }
-        };
-    }
-}
-
-fn rotate_vec(vector: (i32, i32), deg: i32) -> (i32, i32) {
-    let angle = (deg as f64).to_radians();
-
-    let x = vector.0 as f64;
-    let y = vector.1 as f64;
-
-    let new_x = (angle.cos() * x - angle.sin() * y).round() as i32;
-    let new_y = (angle.sin() * x + angle.cos() * y).round() as i32;
-
-    (new_x, new_y)
-}
-
 fn parse(input: &[String]) -> Vec<Instruction> {
     input
         .iter()
@@ -143,30 +86,41 @@ fn parse(input: &[String]) -> Vec<Instruction> {
         .collect()
 }
 
-fn part1(instr: &Vec<Instruction>) -> u32 {
-    let mut ship = Ship::new((1, 0));
+fn part1(instr: &Vec<Instruction>) -> (u32, u32) {
+    let mut position1: Complex<i32> = Complex::new(0, 0);
+    let mut position2: Complex<i32> = Complex::new(0, 0);
+    let mut current_dir = Instruction::East(0);
+    let mut waypoint: Complex<i32> = Complex::new(10, 1);
 
     for i in instr {
-        ship.apply_instruction(i, &Ship::move_ship);
+        match i {
+            Instruction::North(c)
+            | Instruction::East(c)
+            | Instruction::South(c)
+            | Instruction::West(c) => {
+                let action = i.to_complex().scale(*c as i32);
+                position1 += action;
+                waypoint += action
+            }
+            Instruction::Forward(c) => {
+                let action = current_dir.to_complex().scale(*c as i32);
+                position1 += action;
+                position2 += waypoint.scale(*c as i32)
+            }
+            Instruction::Left(c) | Instruction::Right(c) => {
+                let turn = i.to_complex().powi((c / 90) as i32);
+                current_dir = Instruction::from_complex(current_dir.to_complex() * turn);
+                waypoint *= turn
+            }
+        }
     }
-
-    (ship.pos_x.abs() + ship.pos_y.abs()) as u32
-}
-
-fn part2(instr: &Vec<Instruction>) -> u32 {
-    let mut ship = Ship::new((10, 1));
-
-    for i in instr {
-        ship.apply_instruction(i, &Ship::move_waypoint);
-    }
-
-    (ship.pos_x.abs() + ship.pos_y.abs()) as u32
+    (position1.l1_norm() as u32, position2.l1_norm() as u32)
 }
 
 fn solve(input: &[String]) -> (impl Display, impl Display) {
     let instr = parse(input);
-    let p1 = part1(&instr);
-    let p2 = part2(&instr);
+    let (p1, p2) = part1(&instr);
+    // let p2 = part2(&instr);
 
     (p1, p2)
 }
@@ -183,37 +137,4 @@ fn main() {
     println!("Part 1: {}", r1);
     println!("Part 2: {}", r2);
     println!("Duration: {:.3}ms", t);
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::{parse, part1, part2};
-
-    #[test]
-    fn test_p1() {
-        let input = "F10
-N3
-F7
-R90
-F11";
-
-        let input = input.split("\n").map(String::from).collect::<Vec<String>>();
-        let res = part1(&parse(&input));
-
-        assert_eq!(25, res);
-    }
-
-    #[test]
-    fn test_p2() {
-        let input = "F10
-N3
-F7
-R90
-F11";
-
-        let input = input.split("\n").map(String::from).collect::<Vec<String>>();
-        let res = part2(&parse(&input));
-
-        assert_eq!(286, res);
-    }
 }
